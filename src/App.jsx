@@ -7,7 +7,7 @@ import ProductDetail from "./ProductDetail";
 import Checkout from "./Checkoutpage";
 import ProfilePanel from "./ProfileView";
 
-const API = "https://kickoff-11.up.railway.app";
+const API = "https://kickoff-server-production-3834.up.railway.app";
 const sportEmoji = { Football: "⚽", Cricket: "🏏", Basketball: "🏀", Kabaddi: "🤼", Hockey: "🏑", Tennis: "🎾", default: "🏆" };
 
 function getCartKey(user) { return user ? `cart_${user}` : null; }

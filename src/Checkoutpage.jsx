@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-const API = "https://kickoff-11.up.railway.app";
+const API = "https://kickoff-server-production-3834.up.railway.app";
 
 const STATES = [
   "Andhra Pradesh","Arunachal Pradesh","Assam","Bihar","Chhattisgarh","Goa","Gujarat",

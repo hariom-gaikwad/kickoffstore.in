@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const API = "https://kickoff-11.up.railway.app";
+const API = "https://kickoff-server-production-3834.up.railway.app";
 const sportEmoji = { Football: "⚽", Cricket: "🏏", Basketball: "🏀", Kabaddi: "🤼", Hockey: "🏑", Tennis: "🎾", default: "🏆" };
 
 const getToken = () => sessionStorage.getItem("adminAuth");

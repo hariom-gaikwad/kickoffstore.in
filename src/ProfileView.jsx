@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 
-const API = "https://kickoff-11.up.railway.app";   // ← Railway backend
+const API = "https://kickoff-server-production-3834.up.railway.app";   // ← Railway backend
 
 function OTPInput({ value, onChange, onComplete, digits = 6 }) {
   const refs = Array.from({ length: digits }, () => useRef(null));
