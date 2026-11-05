@@ -2,31 +2,6 @@ import { useState, useEffect, useCallback, useRef } from "react";
 
 const API = "https://kickoff-server-production-3834.up.railway.app";   // ← Railway backend
 
-function OTPInput({ value, onChange, onComplete, digits = 6 }) {
-  const refs = Array.from({ length: digits }, () => useRef(null));
-  const vals = value.split("").concat(Array(digits).fill("")).slice(0, digits);
-  const handle = (i, v) => {
-    const ch = v.replace(/\D/g, "").slice(-1);
-    const next = [...vals]; next[i] = ch;
-    const str = next.join("");
-    onChange(str);
-    if (ch && i < digits - 1) refs[i + 1].current?.focus();
-    if (str.replace(/\s/g, "").length === digits) onComplete?.(str);
-  };
-  const onKey = (i, e) => {
-    if (e.key === "Backspace" && !vals[i] && i > 0) refs[i - 1].current?.focus();
-  };
-  return (
-    <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
-      {vals.map((d, i) => (
-        <input key={i} ref={refs[i]} type="text" inputMode="numeric" maxLength={1} value={d}
-          onChange={e => handle(i, e.target.value)} onKeyDown={e => onKey(i, e)}
-          style={{ width: 44, height: 54, textAlign: "center", background: "#0c0c0c", border: `2px solid ${d ? "#c8ff00" : "#252525"}`, borderRadius: 10, color: "#fff", fontSize: 20, fontWeight: 700, fontFamily: "'DM Sans', sans-serif", outline: "none", transition: "border-color 0.2s" }} />
-      ))}
-    </div>
-  );
-}
-
 function OrderTracker({ order }) {
   const stages = ["Placed", "Confirmed", "Shipped", "Out for Delivery", "Delivered"];
   const daysSince = Math.floor((Date.now() - new Date(order.date).getTime()) / 86400000);
@@ -54,11 +29,8 @@ export default function ProfilePanel({ user, setUser, setShowProfile, setAuthMod
   const [flow, setFlow]         = useState("idle");
   const [email, setEmail]       = useState("");
   const [password, setPassword] = useState("");
-  const [otp, setOtp]           = useState("");
-  const [otpErr, setOtpErr]     = useState("");
-  const [sending, setSending]   = useState(false);
-  const [verifying, setVerifying] = useState(false);
-  const [resendIn, setResendIn] = useState(0);
+  const [authErr, setAuthErr]   = useState("");
+  const [loadingAuth, setLoadingAuth] = useState(false);
   const [tab, setTab]           = useState("profile");
   const [profile, setProfile]   = useState(null);
   const [savingProfile, setSavingProfile] = useState(false);
@@ -76,12 +48,6 @@ export default function ProfilePanel({ user, setUser, setShowProfile, setAuthMod
   const inp = { width: "100%", padding: "11px 14px", borderRadius: 9, background: "#161616", border: "1px solid #2a2a2a", color: "#fff", fontSize: 13, outline: "none", fontFamily: "'DM Sans', sans-serif", boxSizing: "border-box", transition: "border-color 0.2s" };
   const lbl = { display: "block", fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: "#555", marginBottom: 6 };
   const primaryBtn = (disabled) => ({ width: "100%", padding: "13px", borderRadius: 10, background: disabled ? "#1a1a1a" : "#c8ff00", color: disabled ? "#444" : "#0a0a0a", fontWeight: 700, fontSize: 13, letterSpacing: "0.08em", textTransform: "uppercase", border: "none", cursor: disabled ? "not-allowed" : "pointer", fontFamily: "'DM Sans', sans-serif" });
-
-  useEffect(() => {
-    if (resendIn <= 0) return;
-    const t = setInterval(() => setResendIn(p => { if (p <= 1) { clearInterval(t); return 0; } return p - 1; }), 1000);
-    return () => clearInterval(t);
-  }, [resendIn]);
 
   const fetchProfile = useCallback(async () => {
     if (!user) return;
@@ -106,53 +72,57 @@ export default function ProfilePanel({ user, setUser, setShowProfile, setAuthMod
   useEffect(() => { if (user) fetchProfile(); }, [user, fetchProfile]);
   useEffect(() => { if (user && tab === "orders") fetchOrders(); }, [user, tab, fetchOrders]);
 
-  const sendSignupOTP = async () => {
-    if (!email || !password) { setOtpErr("Enter email and password"); return; }
-    if (password.length < 6) { setOtpErr("Password must be at least 6 characters"); return; }
-    setSending(true); setOtpErr("");
+  const handleSignup = async () => {
+    if (!email || !password) { setAuthErr("Enter email and password"); return; }
+    if (password.length < 6) { setAuthErr("Password must be at least 6 characters"); return; }
+    setLoadingAuth(true); setAuthErr("");
     try {
-      const res = await fetch(`${API}/auth/send-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, password, purpose: "signup" }) });
+      const res = await fetch(`${API}/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password })
+      });
       const data = await res.json();
-      if (!res.ok) setOtpErr(data.error || "Failed to send OTP");
-      else { setFlow("signup_otp"); setResendIn(60); }
-    } catch { setOtpErr("Cannot reach server"); }
-    setSending(false);
+      if (!res.ok) {
+        setAuthErr(data.error || "Failed to create account");
+      } else {
+        const u = data.email || email.trim().toLowerCase();
+        setUser(u);
+        localStorage.setItem("user", u);
+        if (data.token) localStorage.setItem("userToken", data.token);
+        setShowProfile(false);
+        setFlow("idle");
+      }
+    } catch {
+      setAuthErr("Cannot connect to server");
+    }
+    setLoadingAuth(false);
   };
 
-  const verifySignupOTP = async (code) => {
-    if (verifying) return;
-    setVerifying(true); setOtpErr("");
+  const handleLogin = async () => {
+    if (!email || !password) { setAuthErr("Enter email and password"); return; }
+    setLoadingAuth(true); setAuthErr("");
     try {
-      const res = await fetch(`${API}/auth/verify-signup`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, otp: code || otp }) });
+      const res = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: email.trim(), password })
+      });
       const data = await res.json();
-      if (!res.ok) { setOtpErr(data.error || "Invalid OTP"); }
-      else { setUser(email); localStorage.setItem("user", email); if (data.token) localStorage.setItem("userToken", data.token); setShowProfile(false); setFlow("idle"); }
-    } catch { setOtpErr("Server error"); }
-    setVerifying(false);
-  };
-
-  const sendLoginOTP = async () => {
-    if (!email) { setOtpErr("Enter your email"); return; }
-    setSending(true); setOtpErr("");
-    try {
-      const res = await fetch(`${API}/auth/send-otp`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, purpose: "login" }) });
-      const data = await res.json();
-      if (!res.ok) setOtpErr(data.error || "Failed to send OTP");
-      else { setFlow("login_otp"); setResendIn(60); }
-    } catch { setOtpErr("Cannot reach server"); }
-    setSending(false);
-  };
-
-  const verifyLoginOTP = async (code) => {
-    if (verifying) return;
-    setVerifying(true); setOtpErr("");
-    try {
-      const res = await fetch(`${API}/auth/verify-login`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email, otp: code || otp }) });
-      const data = await res.json();
-      if (!res.ok) { setOtpErr(data.error || "Invalid OTP"); }
-      else { setUser(email); localStorage.setItem("user", email); if (data.token) localStorage.setItem("userToken", data.token); setShowProfile(false); setFlow("idle"); }
-    } catch { setOtpErr("Server error"); }
-    setVerifying(false);
+      if (!res.ok) {
+        setAuthErr(data.error || "Login failed");
+      } else {
+        const u = data.email || email.trim().toLowerCase();
+        setUser(u);
+        localStorage.setItem("user", u);
+        if (data.token) localStorage.setItem("userToken", data.token);
+        setShowProfile(false);
+        setFlow("idle");
+      }
+    } catch {
+      setAuthErr("Cannot connect to server");
+    }
+    setLoadingAuth(false);
   };
 
   const saveInfo = async () => {
@@ -240,69 +210,35 @@ export default function ProfilePanel({ user, setUser, setShowProfile, setAuthMod
           {/* ── Not logged in ── */}
           {!user && flow === "idle" && (
             <div className="pp-fade" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-              <p style={{ color: "#444", fontSize: 13, marginBottom: 8 }}>Sign in with your Gmail to access your orders, addresses and more.</p>
-              <button onClick={() => { setFlow("signup_email"); setOtpErr(""); }} style={primaryBtn(false)}>Create Account</button>
-              <button onClick={() => { setFlow("login_email"); setOtpErr(""); }} style={{ ...primaryBtn(false), background: "transparent", color: "#fff", border: "1px solid #2a2a2a" }}>Sign In</button>
+              <p style={{ color: "#444", fontSize: 13, marginBottom: 8 }}>Sign in to access your orders, saved addresses, and profile details.</p>
+              <button onClick={() => { setFlow("signup"); setAuthErr(""); }} style={primaryBtn(false)}>Create Account</button>
+              <button onClick={() => { setFlow("login"); setAuthErr(""); }} style={{ ...primaryBtn(false), background: "transparent", color: "#fff", border: "1px solid #2a2a2a" }}>Sign In</button>
             </div>
           )}
 
-          {!user && flow === "signup_email" && (
+          {!user && flow === "signup" && (
             <div className="pp-fade" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <button onClick={() => { setFlow("idle"); setOtpErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontSize: 11, fontWeight: 700, cursor: "pointer", textAlign: "left", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>← Back</button>
+              <button onClick={() => { setFlow("idle"); setAuthErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontSize: 11, fontWeight: 700, cursor: "pointer", textAlign: "left", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>← Back</button>
               <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.4rem", color: "#fff", letterSpacing: "0.06em", margin: 0 }}>Create Account</h3>
-              <p style={{ color: "#555", fontSize: 12, margin: 0 }}>We'll send a 6-digit OTP to your Gmail to verify your email.</p>
-              <div><label style={lbl}>Gmail address</label><input type="email" className="pp-inp" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@gmail.com" style={inp} onFocus={e=>e.target.style.borderColor="#c8ff00"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} /></div>
-              <div><label style={lbl}>Password</label><input type="password" className="pp-inp" value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 6 characters" style={inp} onFocus={e=>e.target.style.borderColor="#c8ff00"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} onKeyDown={e => e.key === "Enter" && sendSignupOTP()} /></div>
-              {otpErr && <p style={{ color: "#ef4444", fontSize: 12, margin: 0 }}>⚠️ {otpErr}</p>}
-              <button onClick={sendSignupOTP} disabled={sending} style={primaryBtn(sending)}>{sending ? "Sending OTP..." : "Send OTP to Gmail →"}</button>
-              <p style={{ textAlign: "center", color: "#444", fontSize: 12 }}>Have an account? <button onClick={() => { setFlow("login_email"); setOtpErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Sign in</button></p>
+              <p style={{ color: "#555", fontSize: 12, margin: 0 }}>Enter your email and a password to register.</p>
+              <div><label style={lbl}>Email address</label><input type="email" className="pp-inp" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inp} onFocus={e=>e.target.style.borderColor="#c8ff00"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} /></div>
+              <div><label style={lbl}>Password</label><input type="password" className="pp-inp" value={password} onChange={e => setPassword(e.target.value)} placeholder="Min 6 characters" style={inp} onFocus={e=>e.target.style.borderColor="#c8ff00"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} onKeyDown={e => e.key === "Enter" && handleSignup()} /></div>
+              {authErr && <p style={{ color: "#ef4444", fontSize: 12, margin: 0 }}>⚠️ {authErr}</p>}
+              <button onClick={handleSignup} disabled={loadingAuth} style={primaryBtn(loadingAuth)}>{loadingAuth ? "Creating Account..." : "Create Account →"}</button>
+              <p style={{ textAlign: "center", color: "#444", fontSize: 12 }}>Have an account? <button onClick={() => { setFlow("login"); setAuthErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Sign in</button></p>
             </div>
           )}
 
-          {!user && flow === "signup_otp" && (
-            <div className="pp-fade" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <button onClick={() => { setFlow("signup_email"); setOtp(""); setOtpErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontSize: 11, fontWeight: 700, cursor: "pointer", textAlign: "left", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>← Back</button>
-              <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.4rem", color: "#fff", letterSpacing: "0.06em", margin: 0 }}>Verify Email</h3>
-              <div style={{ padding: "12px 16px", background: "rgba(200,255,0,0.06)", border: "1px solid rgba(200,255,0,0.15)", borderRadius: 10 }}>
-                <p style={{ color: "#c8ff00", fontSize: 12, fontWeight: 700, margin: "0 0 2px" }}>OTP sent to your Gmail</p>
-                <p style={{ color: "#555", fontSize: 11, margin: 0 }}>{email}</p>
-              </div>
-              <OTPInput value={otp} onChange={v => { setOtp(v); setOtpErr(""); }} onComplete={verifySignupOTP} />
-              {otpErr && <p style={{ color: "#ef4444", fontSize: 12, margin: 0, textAlign: "center" }}>⚠️ {otpErr}</p>}
-              <button onClick={() => verifySignupOTP()} disabled={verifying || otp.length < 6} style={primaryBtn(verifying || otp.length < 6)}>{verifying ? "Verifying..." : "Verify & Create Account →"}</button>
-              <p style={{ textAlign: "center", color: "#444", fontSize: 12, margin: 0 }}>
-                {resendIn > 0 ? <span style={{ color: "#333" }}>Resend in {resendIn}s</span> : <button onClick={sendSignupOTP} style={{ background: "none", border: "none", color: "#c8ff00", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Resend OTP</button>}
-              </p>
-              <p style={{ color: "#333", fontSize: 11, textAlign: "center", margin: 0 }}>Check your inbox & spam folder</p>
-            </div>
-          )}
-
-          {!user && flow === "login_email" && (
+          {!user && flow === "login" && (
             <div className="pp-fade" style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <button onClick={() => { setFlow("idle"); setOtpErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontSize: 11, fontWeight: 700, cursor: "pointer", textAlign: "left", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>← Back</button>
+              <button onClick={() => { setFlow("idle"); setAuthErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontSize: 11, fontWeight: 700, cursor: "pointer", textAlign: "left", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>← Back</button>
               <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.4rem", color: "#fff", letterSpacing: "0.06em", margin: 0 }}>Sign In</h3>
-              <p style={{ color: "#555", fontSize: 12, margin: 0 }}>Enter your Gmail and we'll send you an OTP to sign in securely.</p>
-              <div><label style={lbl}>Gmail address</label><input type="email" className="pp-inp" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@gmail.com" style={inp} onFocus={e=>e.target.style.borderColor="#c8ff00"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} onKeyDown={e => e.key === "Enter" && sendLoginOTP()} /></div>
-              {otpErr && <p style={{ color: "#ef4444", fontSize: 12, margin: 0 }}>⚠️ {otpErr}</p>}
-              <button onClick={sendLoginOTP} disabled={sending} style={primaryBtn(sending)}>{sending ? "Sending OTP..." : "Send OTP to Gmail →"}</button>
-              <p style={{ textAlign: "center", color: "#444", fontSize: 12 }}>No account? <button onClick={() => { setFlow("signup_email"); setOtpErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Create one</button></p>
-            </div>
-          )}
-
-          {!user && flow === "login_otp" && (
-            <div className="pp-fade" style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-              <button onClick={() => { setFlow("login_email"); setOtp(""); setOtpErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontSize: 11, fontWeight: 700, cursor: "pointer", textAlign: "left", letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'DM Sans', sans-serif" }}>← Back</button>
-              <h3 style={{ fontFamily: "'Bebas Neue', sans-serif", fontSize: "1.4rem", color: "#fff", letterSpacing: "0.06em", margin: 0 }}>Enter OTP</h3>
-              <div style={{ padding: "12px 16px", background: "rgba(200,255,0,0.06)", border: "1px solid rgba(200,255,0,0.15)", borderRadius: 10 }}>
-                <p style={{ color: "#c8ff00", fontSize: 12, fontWeight: 700, margin: "0 0 2px" }}>Login code sent to</p>
-                <p style={{ color: "#555", fontSize: 11, margin: 0 }}>{email}</p>
-              </div>
-              <OTPInput value={otp} onChange={v => { setOtp(v); setOtpErr(""); }} onComplete={verifyLoginOTP} />
-              {otpErr && <p style={{ color: "#ef4444", fontSize: 12, margin: 0, textAlign: "center" }}>⚠️ {otpErr}</p>}
-              <button onClick={() => verifyLoginOTP()} disabled={verifying || otp.length < 6} style={primaryBtn(verifying || otp.length < 6)}>{verifying ? "Verifying..." : "Sign In →"}</button>
-              <p style={{ textAlign: "center", color: "#444", fontSize: 12, margin: 0 }}>
-                {resendIn > 0 ? <span style={{ color: "#333" }}>Resend in {resendIn}s</span> : <button onClick={sendLoginOTP} style={{ background: "none", border: "none", color: "#c8ff00", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Resend OTP</button>}
-              </p>
+              <p style={{ color: "#555", fontSize: 12, margin: 0 }}>Enter your email and password to sign in.</p>
+              <div><label style={lbl}>Email address</label><input type="email" className="pp-inp" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" style={inp} onFocus={e=>e.target.style.borderColor="#c8ff00"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} /></div>
+              <div><label style={lbl}>Password</label><input type="password" className="pp-inp" value={password} onChange={e => setPassword(e.target.value)} placeholder="Your password" style={inp} onFocus={e=>e.target.style.borderColor="#c8ff00"} onBlur={e=>e.target.style.borderColor="#2a2a2a"} onKeyDown={e => e.key === "Enter" && handleLogin()} /></div>
+              {authErr && <p style={{ color: "#ef4444", fontSize: 12, margin: 0 }}>⚠️ {authErr}</p>}
+              <button onClick={handleLogin} disabled={loadingAuth} style={primaryBtn(loadingAuth)}>{loadingAuth ? "Signing In..." : "Sign In →"}</button>
+              <p style={{ textAlign: "center", color: "#444", fontSize: 12 }}>No account? <button onClick={() => { setFlow("signup"); setAuthErr(""); }} style={{ background: "none", border: "none", color: "#c8ff00", fontWeight: 700, cursor: "pointer", fontSize: 12 }}>Create one</button></p>
             </div>
           )}
 
